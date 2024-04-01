@@ -57,6 +57,11 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
+    imagen_usuario = models.ImageField(upload_to='usuarios', blank=True, null=True)
+    descripcion = models.TextField(blank=True, null=True)
+    fecha_nacimiento = models.DateField(blank=True, null=True)
+    telefono = models.CharField(max_length=15, blank=True, null=True)
+    gmail = models.EmailField(blank=True, null=True)
 
     objects = CustomUserManager()
 
@@ -339,3 +344,18 @@ class Registro(models.Model):
 
     def __str__(self):
         return f'{self.estado} - {self.FechaAbierto} - {self.HoraAbierto}'
+
+
+#-------------------------------------------------------------------------------------from django.db import models
+from django.db import models
+
+class EnviosNisira(models.Model):
+    IdEnvio = models.CharField(max_length=50, unique=True)
+    FechaEnviado = models.DateField(auto_now_add=True)
+    HoraEnvio = models.TimeField(auto_now_add=True)
+    FechaNisira = models.DateField()
+    Encabezado = models.CharField(max_length=100)
+    KilosEnviados = models.CharField(max_length=50)  # Ajusta la longitud máxima según tus necesidades
+
+    def __str__(self):
+        return self.Encabezado

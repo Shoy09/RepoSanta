@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 from datetime import timedelta
 from pathlib import Path
+import os
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -99,7 +101,7 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'Monica',  # Cambiado a snake_case (reemplazado espacio con guión bajo)
+        'NAME': 'SantaPr',  # Cambiado a snake_case (reemplazado espacio con guión bajo)
         'USER': 'root',
         'PASSWORD': '',
         'HOST': '127.0.0.1',
@@ -162,3 +164,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # settings.py
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]', '10.0.2.2']
+
+
+
+DEBUG = True  # Asegúrate de tener DEBUG en True para servir archivos estáticos durante el desarrollo
+
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

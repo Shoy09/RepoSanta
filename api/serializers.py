@@ -1,24 +1,33 @@
-# api/serializers.py
 from rest_framework import serializers
-from django.utils import timezone
 from .models import CustomUser
 
-
 class CustomUserSerializer(serializers.ModelSerializer):
+    imagen_usuario = serializers.ImageField(required=False)
+
     class Meta:
         model = CustomUser
-        fields = ('dni', 'apel_nomb', 'tipo_usuarioapp', 'password')
+        fields = ('dni', 'apel_nomb', 'tipo_usuarioapp', 'password', 'imagen_usuario')
         extra_kwargs = {'password': {'write_only': True}}
 
     def create(self, validated_data):
+        imagen_usuario = validated_data.pop('imagen_usuario', None)
         user = CustomUser.objects.create_user(**validated_data)
+        if imagen_usuario:
+            user.imagen_usuario = imagen_usuario
+            user.save()
         return user
 
     def update(self, instance, validated_data):
+        imagen_usuario = validated_data.pop('imagen_usuario', None)
         instance.apel_nomb = validated_data.get('apel_nomb', instance.apel_nomb)
         instance.tipo_usuarioapp = validated_data.get('tipo_usuarioapp', instance.tipo_usuarioapp)
+        instance.password = validated_data.get('password', instance.password)
+        if imagen_usuario:
+            instance.imagen_usuario = imagen_usuario
         instance.save()
         return instance
+
+
     
 from rest_framework import serializers
 from .models import Empresa
@@ -199,4 +208,29 @@ class DetalleImportacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImportarAsistenciaDetalle
         fields = ['item', 'idcodigogeneral', 'idactividad', 'idlabor', 'idconsumidor', 'cantidad']
+
+
+#---------------------------------------------------
+from rest_framework import serializers
+from .models import EnviosNisira
+from django.utils import timezone
+from .models import EnviosNisira
+
+class EnviosNisiraSerializer(serializers.ModelSerializer):
+    FechaEnviado = serializers.DateField(format='%Y%m%d', read_only=True)
+    HoraEnvio = serializers.TimeField(format='%H:%M:%S', read_only=True)
+    FechaNisira = serializers.DateField(format='%Y%m%d', input_formats=['%Y%m%d'])
+
+    def create(self, validated_data):
+        validated_data['FechaEnviado'] = timezone.now().strftime('%Y%m%d')
+        return super().create(validated_data)
+
+    def validate(self, data):
+        if 'IdEnvio' not in data or data['IdEnvio'] is None:
+            raise serializers.ValidationError("El campo IdEnvio es obligatorio.")
+        return data
+
+    class Meta:
+        model = EnviosNisira
+        fields = '__all__'
 

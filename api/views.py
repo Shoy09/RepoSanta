@@ -1,3 +1,44 @@
+from django.http import HttpResponse
+from django.conf import settings
+import os
+
+def default_image_view(request):
+    # Ruta a la imagen predeterminada
+    default_image_path = os.path.join(settings.MEDIA_ROOT, 'usuarios/avatar.png')
+
+    # Abre la imagen y lee los bytes
+    with open(default_image_path, 'rb') as f:
+        image_data = f.read()
+
+    # Devuelve los bytes de la imagen como respuesta HTTP
+    return HttpResponse(image_data, content_type='image/png')
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
+from .models import CustomUser
+from .serializers import CustomUserSerializer
+
+class UserUpdateAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, dni, format=None):
+        try:
+            usuario = CustomUser.objects.get(dni=dni)
+        except CustomUser.DoesNotExist:
+            return Response({'error': 'El usuario no existe'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Elimina la contraseña de los datos de la solicitud si está presente
+        if 'password' in request.data:
+            del request.data['password']
+
+        serializer = CustomUserSerializer(usuario, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 from django.contrib.auth import authenticate
 from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes
@@ -45,9 +86,6 @@ class CustomUserViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         instance.delete()
 
-
-
-
 class ObtainTokenView(APIView):
     def post(self, request):
         dni = request.data.get('dni')
@@ -65,26 +103,30 @@ class ObtainTokenView(APIView):
         else:
             return Response({'error': 'Credenciales inválidas'}, status=status.HTTP_401_UNAUTHORIZED)
 
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from .serializers import CustomUserSerializer
+from django.urls import reverse
+from rest_framework.request import Request
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def getCurrentUser(request):
     user = request.user
 
-    # Utiliza tu propio serializador para CustomUser
-    user_serializer = CustomUserSerializer(user)
+    # Obtener la URL completa de la imagen
+    full_image_url = None
+    if user.imagen_usuario:
+        full_image_url = request.build_absolute_uri(user.imagen_usuario.url)
 
-    user_data = {
-        'id': user.id,
-        'dni': user.dni,
-        'apel_nomb': user.apel_nomb,
-        'tipo_usuarioapp': user.tipo_usuarioapp,
-        'is_active': user.is_active,
-        'is_staff': user.is_staff,
-        'date_joined': user.date_joined,
-        # Agrega otros campos según tu modelo de usuario
-    }
+    # Serializar el usuario con la URL completa de la imagen
+    user_data = CustomUserSerializer(user, context={'request': request}).data
+    user_data['imagen_usuario'] = full_image_url
 
-    return JsonResponse(user_data)
+    return Response(user_data)
+
+
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
@@ -135,7 +177,7 @@ class UserByDniAPIView(generics.RetrieveAPIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except CustomUser.DoesNotExist:
             return Response({'detail': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-        
+
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -258,7 +300,7 @@ class EmisorListCreateAPIView(APIView):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
     from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -355,7 +397,7 @@ class DiaAPIView(APIView):
         registro_abierto = Registro.objects.filter(estado='Abierto').first()
         if not registro_abierto:
             return Response({"error": "No hay día abierto para cerrar"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         # Actualizar el registro para cerrar el día
         registro_abierto.FechaCerrado = fecha_actual
         registro_abierto.HoraCerrado = hora_actual
@@ -408,7 +450,7 @@ def importar_asistencia_Post(request):
             if existing_worker.exists():
                 return Response({"error": "Este trabajador ya ha sido importado en este registro abierto."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Obtener la fecha y hora actuales
             fecha_hora_actual = timezone.now()
 
@@ -461,41 +503,41 @@ class MerluzasistenciaUpdateByCodigoGeneralView(APIView):
         try:
             # Obtener la fecha actual
             fecha_actual = datetime.now().strftime("%Y%m%d")
-            
+
             # Verificar si hay un día abierto
             registro_abierto = Registro.objects.filter(estado='Abierto').order_by('-FechaAbierto').first()
             if not registro_abierto:
                 return Response({"error": "No hay día abierto para actualizar la asistencia."}, status=status.HTTP_400_BAD_REQUEST)
-                
+
             # Buscar el registro de ImportarAsistenciaDetalle por idcodigogeneral e idlabor en el día abierto más cercano
             asistencia_detalle = ImportarAsistenciaDetalle.objects.filter(
-                idcodigogeneral=idcodigogeneral, 
-                idlabor=idlabor, 
+                idcodigogeneral=idcodigogeneral,
+                idlabor=idlabor,
                 importar_asistencia__fecha=registro_abierto.FechaAbierto
             ).first()
-            
+
             # Verificar si se encontró un registro para actualizar
             if not asistencia_detalle:
                 return Response({"error": "No se encontró el registro de ImportarAsistenciaDetalle para actualizar en el día abierto más cercano."}, status=status.HTTP_404_NOT_FOUND)
-            
+
             # Actualizar la cantidad si existe en los datos de la solicitud
             if 'cantidad' in request.data:
                 asistencia_detalle.cantidad = request.data['cantidad']
                 asistencia_detalle.save()
-                
+
                 # Obtener la asistencia actualizada
                 asistencia = asistencia_detalle.importar_asistencia
-                
+
                 # Serializar la asistencia y sus detalles
                 serializer = AsistenciaSerializer(asistencia)
                 data = serializer.data
                 detalles = AsistenciaDetalleSerializer(asistencia.detalle.all(), many=True).data
                 data['detalle'] = detalles
-                
+
                 return Response(data, status=status.HTTP_200_OK)
             else:
                 return Response({"error": "La cantidad no se proporcionó en los datos de la solicitud"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -513,7 +555,7 @@ def importar_asistencia_list(request):
         return Response(data, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
+
 # ------------------------------------------------------------------------------------
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -533,19 +575,19 @@ class POTAAsistenciaUpdateByCodigoGeneralView(APIView):
             if not registro_abierto:
                 return Response({"error": "El día está cerrado, no se pueden obtener datos de asistencia."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Obtener la fecha de cierre del registro abierto
             fecha_cierre = registro_abierto.FechaCerrado
-            
+
             # Calcular la fecha mínima y máxima para el rango de búsqueda
             fecha_inicio = registro_abierto.FechaAbierto
             fecha_fin = fecha_cierre if fecha_cierre else datetime.now().strftime('%Y%m%d')
-            
+
             # Filtrar los trabajadores importados en el rango de fechas
             importar_asistencias = ImportarAsistencia.objects.filter(
                 fecha__range=(fecha_inicio, fecha_fin)
             )
-            
+
             # Serializar los datos de asistencia y sus detalles
             data = []
             for importar_asistencia in importar_asistencias:
@@ -553,9 +595,9 @@ class POTAAsistenciaUpdateByCodigoGeneralView(APIView):
                 detalles = ImportarAsistenciaDetalleSerializer(importar_asistencia.detalle.all(), many=True).data
                 asistencia_data['detalle'] = detalles
                 data.append(asistencia_data)
-            
+
             return Response(data, status=status.HTTP_200_OK)
-        
+
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -566,36 +608,36 @@ class POTAAsistenciaUpdateByCodigoGeneralView(APIView):
             if not registro_abierto:
                 return Response({"error": "El día está cerrado, no se pueden actualizar los datos de asistencia."},
                                 status=status.HTTP_400_BAD_REQUEST)
-            
+
             # Filtrar el ImportarAsistenciaDetalle basado en la fecha de apertura del registro más reciente y el idcodigogeneral
             asistencia_detalle = ImportarAsistenciaDetalle.objects.filter(
                 Q(importar_asistencia__fecha__gte=registro_abierto.FechaAbierto) &
                 Q(idcodigogeneral=idcodigogeneral)
             ).first()
-            
+
             # Verificar si se encontró el registro de asistencia
             if not asistencia_detalle:
                 return Response({"error": "No se encontró el registro de ImportarAsistenciaDetalle con idcodigogeneral proporcionado o no pertenece al día abierto actual."},
                                 status=status.HTTP_404_NOT_FOUND)
-            
+
             # Actualizar la cantidad si existe en los datos de la solicitud
             if 'cantidad' in request.data:
                 asistencia_detalle.cantidad = request.data['cantidad']
                 asistencia_detalle.save()
-                
+
                 # Obtener la asistencia actualizada
                 asistencia = asistencia_detalle.importar_asistencia
-                
+
                 # Serializar la asistencia y sus detalles
                 serializer = AsistenciaSerializer(asistencia)
                 data = serializer.data
                 detalles = AsistenciaDetalleSerializer(asistencia.detalle.all(), many=True).data
                 data['detalle'] = detalles
-                
+
                 return Response(data, status=status.HTTP_200_OK)
             else:
                 return Response({"error": "La cantidad no se proporcionó en los datos de la solicitud"}, status=status.HTTP_400_BAD_REQUEST)
-        
+
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -685,7 +727,7 @@ def importaciones_por_fecha(request, fecha_abierto):
     try:
         # Obtener el registro para la fecha proporcionada
         registro = Registro.objects.filter(FechaAbierto=fecha_abierto).first()
-        
+
         if not registro:
             return Response({"error": "No hay registro para la fecha proporcionada."},
                             status=status.HTTP_404_NOT_FOUND)
@@ -693,7 +735,7 @@ def importaciones_por_fecha(request, fecha_abierto):
         # Obtener la fecha de apertura y cierre del registro
         fecha_apertura = registro.FechaAbierto
         fecha_cierre = registro.FechaCerrado
-        
+
         # Filtrar los registros de ImportarAsistencia dentro del rango de fechas del registro
         importar_asistencias = ImportarAsistencia.objects.filter(
             fecha__range=(fecha_apertura, fecha_cierre)
@@ -720,13 +762,13 @@ def importaciones_por_fecha(request, fecha_abierto):
                 asistencia_data['detalle'] = detalles
                 data.append(asistencia_data)
                 existing_ids.add(asistencia_data['id'])  # Agregar el ID a existing_ids
-        
+
         return Response(data, status=status.HTTP_200_OK)
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 #------------------------------------------
-    
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
@@ -769,7 +811,7 @@ def importaciones_clasificadas_por_fecha(request, fecha_abierto, encabezado=None
             "DESTAJOMERLUZA": {
                 "idempresa": "001",
                 "tipo_envio": "R",
-                "idresponsable": "000001",
+                "idresponsable": "000020",
                 "idplanilla": "OBP",
                 "idemisor": "001",
                 "idturno": "01",
@@ -781,7 +823,7 @@ def importaciones_clasificadas_por_fecha(request, fecha_abierto, encabezado=None
             "DESTAJOPOTA": {
                 "idempresa": "001",
                 "tipo_envio": "R",
-                "idresponsable": "000001",
+                "idresponsable": "000018",
                 "idplanilla": "OBP",
                 "idemisor": "001",
                 "idturno": "01",
@@ -793,7 +835,7 @@ def importaciones_clasificadas_por_fecha(request, fecha_abierto, encabezado=None
             "JORNALMERLUZA": {
                 "idempresa": "001",
                 "tipo_envio": "H",
-                "idresponsable": "000001",
+                "idresponsable": "000019",
                 "idplanilla": "OBP",
                 "idemisor": "001",
                 "idturno": "01",
@@ -805,7 +847,7 @@ def importaciones_clasificadas_por_fecha(request, fecha_abierto, encabezado=None
             "JORNALPOTA": {
                 "idempresa": "001",
                 "tipo_envio": "H",
-                "idresponsable": "000001",
+                "idresponsable": "000017",
                 "idplanilla": "OBP",
                 "idemisor": "001",
                 "idturno": "01",
@@ -817,28 +859,32 @@ def importaciones_clasificadas_por_fecha(request, fecha_abierto, encabezado=None
         }
 
         for importar_asistencia in importar_asistencias:
-            detalles = DetalleImportacionSerializer(importar_asistencia.detalle.all(), many=True).data
-            detalles = []
-            for detalle in importar_asistencia.detalle.all():
+            detalles_importacion = DetalleImportacionSerializer(importar_asistencia.detalle.all(), many=True).data
+            for detalle in detalles_importacion:
                 detalle_data = {
-                    "item": detalle.item,
-                    "idcodigogeneral": detalle.idcodigogeneral,
-                    "idactividad": detalle.idactividad,
-                    "idlabor": detalle.idlabor,
-                    "idconsumidor": detalle.idconsumidor,
-                    "cantidad": detalle.cantidad
+                    "item": detalle["item"],
+                    "idcodigogeneral": detalle["idcodigogeneral"],
+                    "idactividad": detalle["idactividad"],
+                    "idlabor": detalle["idlabor"],
+                    "idconsumidor": "",  # Inicializamos el idconsumidor como cadena vacía
+                    "cantidad": detalle["cantidad"]
                 }
-                detalles.append(detalle_data)
-
-            if encabezado:
-                encabezado_data = encabezados.get(encabezado)
-                if encabezado_data and importar_asistencia.tipo_envio == encabezado_data['tipo_envio'] and importar_asistencia.idespecie == encabezado_data['idespecie']:
-                    encabezado_data['detalle'].extend(detalles)
-            else:
-                # Si no se proporciona un encabezado, agregamos detalles a todos los encabezados
-                for encabezado_data in encabezados.values():
-                    if importar_asistencia.tipo_envio == encabezado_data['tipo_envio'] and importar_asistencia.idespecie == encabezado_data['idespecie']:
-                        encabezado_data['detalle'].extend(detalles)
+                if encabezado:
+                    encabezado_data = encabezados.get(encabezado)
+                    if encabezado_data and importar_asistencia.tipo_envio == encabezado_data['tipo_envio'] and importar_asistencia.idespecie == encabezado_data['idespecie']:
+                        if encabezado in ["DESTAJOMERLUZA", "JORNALMERLUZA"]:
+                            detalle_data["idconsumidor"] = "CDPMEPPT"
+                        elif encabezado in ["DESTAJOPOTA", "JORNALPOTA"]:
+                            detalle_data["idconsumidor"] = "CDPPOPPT"
+                        encabezado_data['detalle'].append(detalle_data)
+                else:
+                    for encabezado_data in encabezados.values():
+                        if importar_asistencia.tipo_envio == encabezado_data['tipo_envio'] and importar_asistencia.idespecie == encabezado_data['idespecie']:
+                            if encabezado_data["idencabezado"] in ["DESTAJOMERLUZA", "JORNALMERLUZA"]:
+                                detalle_data["idconsumidor"] = "CDPMEPPT"
+                            elif encabezado_data["idencabezado"] in ["DESTAJOPOTA", "JORNALPOTA"]:
+                                detalle_data["idconsumidor"] = "CDPPOPPT"
+                            encabezado_data['detalle'].append(detalle_data)
 
         # Devolver todos los encabezados si no se proporciona un encabezado específico
         if not encabezado:
@@ -849,6 +895,98 @@ def importaciones_clasificadas_por_fecha(request, fecha_abierto, encabezado=None
             return Response({"encabezado": encabezados[encabezado]}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "No se encontró el encabezado solicitado."}, status=status.HTTP_404_NOT_FOUND)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+#-----------------------------------------------------------
+@api_view(['GET'])
+def importaciones_clasificadas_por_fecha_sin_encabezado(request, fecha_abierto):
+    try:
+        registro = Registro.objects.filter(FechaAbierto=fecha_abierto).first()
+        if not registro:
+            return Response({"error": "No hay registro para la fecha proporcionada."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        fecha_apertura = registro.FechaAbierto
+        fecha_cierre = registro.FechaCerrado
+
+        importar_asistencias = ImportarAsistencia.objects.filter(
+            fecha__range=(fecha_apertura, fecha_cierre)
+        )
+
+        encabezados = {
+            "DESTAJOMERLUZA": {
+                "idempresa": "001",
+                "tipo_envio": "R",
+                "idresponsable": "000020",
+                "idplanilla": "OBP",
+                "idemisor": "001",
+                "idturno": "01",
+                "fecha": fecha_abierto,
+                "idsucursal": "001",
+                "idespecie": "002",
+                "detalle": []
+            },
+            "DESTAJOPOTA": {
+                "idempresa": "001",
+                "tipo_envio": "R",
+                "idresponsable": "000018",
+                "idplanilla": "OBP",
+                "idemisor": "001",
+                "idturno": "01",
+                "fecha": fecha_abierto,
+                "idsucursal": "001",
+                "idespecie": "001",
+                "detalle": []
+            },
+            "JORNALMERLUZA": {
+                "idempresa": "001",
+                "tipo_envio": "H",
+                "idresponsable": "000019",
+                "idplanilla": "OBP",
+                "idemisor": "001",
+                "idturno": "01",
+                "fecha": fecha_abierto,
+                "idsucursal": "001",
+                "idespecie": "002",
+                "detalle": []
+            },
+            "JORNALPOTA": {
+                "idempresa": "001",
+                "tipo_envio": "H",
+                "idresponsable": "000017",
+                "idplanilla": "OBP",
+                "idemisor": "001",
+                "idturno": "01",
+                "fecha": fecha_abierto,
+                "idsucursal": "001",
+                "idespecie": "001",
+                "detalle": []
+            }
+        }
+
+        for importar_asistencia in importar_asistencias:
+            detalles_importacion = DetalleImportacionSerializer(importar_asistencia.detalle.all(), many=True).data
+            for detalle in detalles_importacion:
+                detalle_data = {
+                    "item": detalle["item"],
+                    "idcodigogeneral": detalle["idcodigogeneral"],
+                    "idactividad": detalle["idactividad"],
+                    "idlabor": detalle["idlabor"],
+                    "idconsumidor": "",  # Inicializamos el idconsumidor como cadena vacía
+                    "cantidad": detalle["cantidad"]
+                }
+                for encabezado_data in encabezados.values():
+                    if importar_asistencia.tipo_envio == encabezado_data['tipo_envio'] and importar_asistencia.idespecie == encabezado_data['idespecie']:
+                        if encabezado_data["tipo_envio"] in ["R"]:
+                            detalle_data["idconsumidor"] = "CDPMEPPT"
+                        elif encabezado_data["tipo_envio"] in ["H"]:
+                            detalle_data["idconsumidor"] = "CDPPOPPT"
+                        encabezado_data['detalle'].append(detalle_data)
+
+        # Devolver todos los encabezados
+        return Response([{"encabezado": value} for value in encabezados.values()], status=status.HTTP_200_OK)
 
     except Exception as e:
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -879,3 +1017,113 @@ class UltimoRegistroView(APIView):
         except Exception as e:
             # Manejar cualquier otro error
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+#-----------------------------------------------------------
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from .models import ImportarAsistencia, Registro
+from .serializers import DetalleImportacionSerializer
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def actualizar_importacion(request, fecha_abierto, idcodigogeneral, idlabor):
+    try:
+        registro = Registro.objects.filter(FechaAbierto=fecha_abierto).first()
+        if not registro:
+            return Response({"error": "No hay registro para la fecha proporcionada."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        importar_asistencia = ImportarAsistencia.objects.filter(
+            fecha=fecha_abierto,
+            detalle__idcodigogeneral=idcodigogeneral,
+            detalle__idlabor=idlabor
+        ).first()
+
+        if not importar_asistencia:
+            return Response({"error": "No se encontró la importación para los datos proporcionados."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        cantidad_nueva = request.data.get('cantidad')
+
+        if cantidad_nueva is None:
+            return Response({"error": "La cantidad no fue proporcionada."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        detalle = importar_asistencia.detalle.get(idcodigogeneral=idcodigogeneral, idlabor=idlabor)
+        detalle.cantidad = cantidad_nueva
+        detalle.save()
+
+        return Response({"message": "Cantidad actualizada exitosamente."},
+                        status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+#--------------------------------------------
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def eliminar_detalle_importacion(request, fecha_abierto, idcodigogeneral, idlabor):
+    try:
+        registro = Registro.objects.filter(FechaAbierto=fecha_abierto).first()
+        if not registro:
+            return Response({"error": "No hay registro para la fecha proporcionada."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        importar_asistencia = ImportarAsistencia.objects.filter(
+            fecha=fecha_abierto,
+            detalle__idcodigogeneral=idcodigogeneral,
+            detalle__idlabor=idlabor
+        ).first()
+
+        if not importar_asistencia:
+            return Response({"error": "No se encontró la importación para los datos proporcionados."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        detalle = importar_asistencia.detalle.get(idcodigogeneral=idcodigogeneral, idlabor=idlabor)
+        detalle.delete()
+
+        return Response({"message": "Detalle de importación eliminado exitosamente."},
+                        status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+#--------------------------------------------
+from rest_framework import status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import EnviosNisira
+from .serializers import EnviosNisiraSerializer
+@api_view(['POST'])
+def create_envio_nisira(request):
+    if request.method == 'POST':
+        serializer = EnviosNisiraSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+from datetime import datetime
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def envios_nisira_list(request, fecha_nisira=None):
+    if request.method == 'GET':
+        if fecha_nisira:
+            # Convertir la fecha recibida en la URL al formato correcto (YYYY-MM-DD)
+            fecha_nisira_formatted = datetime.strptime(fecha_nisira, '%Y%m%d').strftime('%Y-%m-%d')
+            # Filtrar los envíos por la fecha proporcionada
+            envios = EnviosNisira.objects.filter(FechaNisira=fecha_nisira_formatted)
+        else:
+            # Obtener todos los envíos si no se proporciona una fecha
+            envios = EnviosNisira.objects.all()
+
+        serializer = EnviosNisiraSerializer(envios, many=True)
+
+        # Serializar los datos y formatear las fechas
+        data = serializer.data
+        for envio_data in data:
+            envio_data['FechaEnviado'] = envio_data['FechaEnviado']
+            envio_data['FechaNisira'] = envio_data['FechaNisira']
+
+        return Response(data, status=status.HTTP_200_OK)
